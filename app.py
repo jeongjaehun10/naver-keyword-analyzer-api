@@ -502,8 +502,9 @@ def api_export():
 
 
 @app.get("/")
-def home():
-    return render_template("index.html")
+@app.get("/health")
+def health():
+    return jsonify(status="ok")
 
 
 if __name__ == "__main__":
