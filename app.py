@@ -283,55 +283,66 @@ def post_text(browser, url: str) -> tuple[str, str]:
 
 
 def analyze(keyword: str, urls: list[str]) -> dict:
-    browser = driver()
+    """본문 수집과 형태소 분석을 분리해 제한된 서버 메모리를 안정적으로 사용한다."""
+    items = [{"url": url, "title": "", "rank": rank} for rank, url in enumerate(urls[:5], 1)]
+    browser = None
+    try:
+        browser = driver()
+        for item in items:
+            try:
+                title, body = post_text(browser, item["url"])
+                item["title"] = title
+                item["_source_text"] = f"{title} {title} {title} {body}"
+            except Exception as error:
+                item.update({"main": "분석 실패", "sub": [clean(str(error))]})
+    finally:
+        if browser is not None:
+            browser.quit()
+
     total = Counter()
     phrases = Counter()
     phrase_documents = Counter()
     phrase_title_hits = Counter()
-    try:
-        items = [{"url": url, "title": ""} for url in urls[:5]]
-        for rank, item in enumerate(items, 1):
-            try:
-                title, body = post_text(browser, item["url"])
-                item["title"] = title or item["title"]
-                source_text = f"{item['title']} {item['title']} {item['title']} {body}"
-                counts = terms(source_text)
-                phrase_counts = phrase_terms(source_text)
-                phrases.update(phrase_counts)
-                phrase_documents.update(phrase_counts.keys())
-                phrase_title_hits.update(phrase_terms(item["title"]).keys())
-                display_counts = phrase_counts if phrase_counts else counts
-                item["main"] = top(display_counts, 1)[0]["word"] if display_counts else "-"
-                item["sub"] = [x["word"] for x in top(display_counts, 11)[1:]]
-                item["rank"] = rank
-                total.update(counts)
-            except Exception as error:
-                item.update({"rank": rank, "main": "분석 실패", "sub": [str(error)]})
-        return {
-            "keyword": keyword,
-            "posts": items,
-            "keywords": top(phrases if phrases else total, 20),
-            "phrases": top(phrases, 30),
-            "phrase_stats": {
-                phrase: {
-                    "documents": phrase_documents[phrase],
-                    "title_hits": phrase_title_hits[phrase],
-                }
+    for item in items:
+        if "main" in item:
+            item.pop("_source_text", None)
+            continue
+        try:
+            source_text = item.pop("_source_text", "")
+            counts = terms(source_text)
+            phrase_counts = phrase_terms(source_text)
+            phrases.update(phrase_counts)
+            phrase_documents.update(phrase_counts.keys())
+            phrase_title_hits.update(phrase_terms(item["title"]).keys())
+            display_counts = phrase_counts if phrase_counts else counts
+            item["main"] = top(display_counts, 1)[0]["word"] if display_counts else "-"
+            item["sub"] = [x["word"] for x in top(display_counts, 11)[1:]]
+            total.update(counts)
+        except Exception as error:
+            item.update({"main": "분석 실패", "sub": [clean(str(error))]})
+
+    return {
+        "keyword": keyword,
+        "posts": items,
+        "keywords": top(phrases if phrases else total, 20),
+        "phrases": top(phrases, 30),
+        "phrase_stats": {
+            phrase: {
+                "documents": phrase_documents[phrase],
+                "title_hits": phrase_title_hits[phrase],
+            }
+            for phrase in phrases
+        },
+        "recommendation": recommendation(
+            total,
+            keyword,
+            phrases,
+            {
+                phrase: {"documents": phrase_documents[phrase], "title_hits": phrase_title_hits[phrase]}
                 for phrase in phrases
             },
-            "recommendation": recommendation(
-                total,
-                keyword,
-                phrases,
-                {
-                    phrase: {"documents": phrase_documents[phrase], "title_hits": phrase_title_hits[phrase]}
-                    for phrase in phrases
-                },
-            ),
-        }
-    finally:
-        browser.quit()
-
+        ),
+    }
 
 def excel_sheet_title(text: str, used: set[str]) -> str:
     base = re.sub(r'[\\/*?:\[\]]', " ", text).strip() or "분석 결과"
